@@ -140,6 +140,7 @@ jobs:
           # 重新生成配置
           make ARCH=arm64 olddefconfig
           # 保存调整后的配置作为 artifact
+          mkdir -p ../configs
           cp .config ../configs/lavender.config
 
       - name: 编译内核 (Image.gz-dtb + dtbs)
