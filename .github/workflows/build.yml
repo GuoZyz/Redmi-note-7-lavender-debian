@@ -1,0 +1,441 @@
+# GitHub Actions workflow:
+# 为红米 Note 7 (lavender / sdm660) 构建 Debian 13 (trixie) ARM64 + GNOME 桌面
+# 产物: kernel Image.gz-dtb, rootfs.tar.gz, boot.img (含 ramdisk)
+# 使用方法: 把此目录内容推送到 GitHub 仓库,然后 Actions -> Run workflow
+
+name: Build Note7 Debian 13 (lavender)
+
+on:
+  workflow_dispatch:        # 手动触发
+  push:
+    branches: [ main ]
+    paths:
+      - 'scripts/**'
+      - 'configs/**'
+      - 'initramfs/**'
+      - '.github/workflows/build.yml'
+
+env:
+  KERNEL_REPO: "https://github.com/LineageOS/android_kernel_xiaomi_sdm660.git"
+  KERNEL_BRANCH: "lineage-18.1"
+  KERNEL_DEFCONFIG: "lavender_defconfig"
+  ROOTFS_DIST: "trixie"
+  ROOTFS_ARCH: "arm64"
+  MIRROR: "https://mirrors.tuna.tsinghua.edu.cn/debian"
+  OUTPUT_DIR: "out"
+  ARTIFACT_DIR: "artifacts"
+
+jobs:
+  build:
+    name: Build kernel + rootfs + boot.img
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240   # 4 小时上限 (GitHub 免费 runner 限制)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 显示环境信息
+        run: |
+          echo "==== Runner 信息 ===="
+          uname -a
+          cat /etc/os-release | head -5
+          nproc
+          free -h
+          df -h $GITHUB_WORKSPACE
+          echo "==== Runner 信息结束 ===="
+
+      - name: 准备构建目录
+        run: |
+          mkdir -p kernel rootfs initramfs_root out artifacts
+          ls -la
+
+      # ============================================================
+      # 阶段 1: 编译内核
+      # ============================================================
+      - name: 安装内核编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git ccache bc bison build-essential cpio curl flex \
+            g++-multilib gcc-multilib gnupg gperf imagemagick \
+            lib32readline-dev lib32z1-dev libelf-dev liblz4-tool \
+            libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop \
+            pngcrush rsync schedtool squashfs-tools xsltproc \
+            zip zlib1g-dev python3 python-is-python3 \
+            device-tree-compiler libncurses-dev dosfstools mtools \
+            mkbootimg android-tools-adb aapt
+
+      - name: 克隆内核源码 (lineage-18.1 / sdm660)
+        run: |
+          cd kernel
+          # 浅克隆避免超时
+          git clone --depth=1 -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} .
+          echo "==== 内核源码大小 ===="
+          du -sh .
+          echo "==== 顶层目录 ===="
+          ls -la | head -20
+          echo "==== arch/arm64/configs/ ===="
+          ls -la arch/arm64/configs/ | head -20
+
+      - name: 配置内核 (lavender_defconfig)
+        run: |
+          cd kernel
+          # 验证 defconfig 存在
+          if [ ! -f "arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}" ]; then
+            echo "错误: ${{ env.KERNEL_DEFCONFIG }} 不存在"
+            echo "请确认 KERNEL_DEFCONFIG 变量,候选:"
+            ls arch/arm64/configs/ | grep -i lav
+            exit 1
+          fi
+          make ARCH=arm64 ${{ env.KERNEL_DEFCONFIG }}
+          echo "==== 默认 .config 段选 ===="
+          grep -E "^CONFIG_(LOCALVERSION|BUILD|DEFAULT_HOSTNAME)" .config || true
+
+      - name: 调整内核配置 (启用 Debian 必需选项)
+        run: |
+          cd kernel
+          # 用 scripts/config 调整选项,不启动 menuconfig (避免 TTY 阻塞)
+          ./scripts/config --enable CONFIG_DEVTMPFS
+          ./scripts/config --enable CONFIG_DEVTMPFS_MOUNT
+          ./scripts/config --enable CONFIG_TMPFS
+          ./scripts/config --enable CONFIG_TMPFS_POSIX_ACL
+          ./scripts/config --enable CONFIG_TMPFS_XATTR
+          ./scripts/config --enable CONFIG_CGROUPS
+          ./scripts/config --enable CONFIG_CGROUP_FREEZER
+          ./scripts/config --enable CONFIG_CGROUP_PIDS
+          ./scripts/config --enable CONFIG_CGROUP_DEVICE
+          ./scripts/config --enable CONFIG_CPUSETS
+          ./scripts/config --enable CONFIG_MEMCG
+          ./scripts/config --enable CONFIG_SYSVIPC
+          ./scripts/config --enable CONFIG_SYSVIPC_SYSCTL
+          ./scripts/config --enable CONFIG_PROC_FS
+          ./scripts/config --enable CONFIG_SYSFS
+          ./scripts/config --enable CONFIG_FHANDLE
+          ./scripts/config --enable CONFIG_EXT4_FS
+          ./scripts/config --enable CONFIG_EXT4_FS_POSIX_ACL
+          ./scripts/config --enable CONFIG_EXT4_FS_SECURITY
+          ./scripts/config --enable CONFIG_AUTOFS4_FS
+          ./scripts/config --enable CONFIG_OVERLAY_FS
+          ./scripts/config --enable CONFIG_SIGNALFD
+          ./scripts/config --enable CONFIG_TIMERFD
+          ./scripts/config --enable CONFIG_EPOLL
+          ./scripts/config --enable CONFIG_NET
+          ./scripts/config --enable CONFIG_PACKET
+          ./scripts/config --enable CONFIG_UNIX
+          ./scripts/config --enable CONFIG_INET
+          ./scripts/config --enable CONFIG_NET_9P
+          ./scripts/config --enable CONFIG_NET_9P_FD
+          ./scripts/config --enable CONFIG_NET_9P_VIRTIO
+          ./scripts/config --enable CONFIG_VIRTIO_BLK
+          ./scripts/config --enable CONFIG_VIRTIO_NET
+          ./scripts/config --enable CONFIG_DRM
+          ./scripts/config --enable CONFIG_DRM_FBDEV_EMULATION
+          # 关闭一些 LineageOS 自带的 Android-only 选项(可选)
+          ./scripts/config --disable CONFIG_ANDROID_LOW_MEMORY_KILLER || true
+          ./scripts/config --disable CONFIG_ION || true
+          # 显示调整后的关键选项
+          echo "==== 调整后关键选项 ===="
+          grep -E "^CONFIG_(DEVTMPFS|TMPFS|CGROUP|SYSVIPC|EXT4_FS|OVERLAY_FS|DRM|FHANDLE)=" .config | head -20
+          # 重新生成配置
+          make ARCH=arm64 olddefconfig
+          # 保存调整后的配置作为 artifact
+          cp .config ../configs/lavender.config
+
+      - name: 编译内核 (Image.gz-dtb + dtbs)
+        run: |
+          cd kernel
+          echo "==== 开始编译,估计 30-90 分钟 ===="
+          time make -j$(nproc) ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            Image.gz-dtb dtbs 2>&1 | tee ../logs/kernel-build.log | tail -50
+          echo "==== 编译完成 ===="
+          ls -la arch/arm64/boot/Image.gz-dtb
+          file arch/arm64/boot/Image.gz-dtb
+          cp arch/arm64/boot/Image.gz-dtb ../out/Image.gz-dtb
+
+      # ============================================================
+      # 阶段 2: 构建 Debian 13 ARM64 rootfs
+      # ============================================================
+      - name: 安装 debootstrap 和 qemu
+        run: |
+          sudo apt-get install -y debootstrap qemu-user-static
+
+      - name: debootstrap Debian 13 (trixie) ARM64
+        run: |
+          sudo debootstrap --arch=${{ env.ROOTFS_ARCH }} \
+            --variant=minbase \
+            ${{ env.ROOTFS_DIST }} \
+            rootfs \
+            ${{ env.MIRROR }} 2>&1 | tail -20
+          echo "==== rootfs 顶层 ===="
+          ls -la rootfs/
+          du -sh rootfs/
+
+      - name: 配置 rootfs 基础 (源、主机名、用户)
+        run: |
+          sudo cp /usr/bin/qemu-aarch64-static rootfs/usr/bin/ || true
+          sudo mount --bind /dev rootfs/dev
+          sudo mount --bind /proc rootfs/proc
+          sudo mount --bind /sys rootfs/sys
+          # chroot 内执行
+          sudo chroot rootfs /bin/bash -c '
+            set -e
+            echo "==== 1. 配置 sources.list (清华源) ===="
+            cat > /etc/apt/sources.list << SOURCES
+deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie main contrib non-free non-free-firmware
+deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie-updates main contrib non-free non-free-firmware
+deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie-backports main contrib non-free non-free-firmware
+deb https://mirrors.tuna.tsinghua.edu.cn/debian-security trixie-security main contrib non-free non-free-firmware
+SOURCES
+            apt-get update
+            echo "==== 2. 安装基础包 ===="
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              locales sudo openssh-server ca-certificates \
+              initramfs-tools busybox kmod udev dbus \
+              console-setup keyboard-configuration
+            echo "==== 3. 安装 GNOME 和桌面环境 ===="
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              gnome gnome-shell gdm3 gnome-terminal nautilus \
+              gnome-control-center gnome-tweaks \
+              xdg-utils xdg-user-dirs
+            echo "==== 4. 安装网络/Modem/蓝牙/声音 ===="
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              network-manager modemmanager ppp wpasupplicant wireless-tools \
+              rfkill bluez bluez-tools \
+              alsa-utils pulseaudio pipewire pipewire-audio pipewire-pulse \
+              fonts-noto-cjk fonts-noto-color-emoji
+            echo "==== 5. 安装工具 ===="
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              bash-completion less vim-tiny nano htop curl wget git \
+              tzdata chrony ntpsec-ntpdate
+            echo "==== 6. 安装 power/virtio(如果可能) ===="
+            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+              upower power-profiles-daemon || true
+            echo "==== 7. 清理 apt 缓存 ===="
+            apt-get clean
+            rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+          '
+          echo "==== rootfs 配置完成,大小: ===="
+          sudo du -sh rootfs/
+
+      - name: 配置 rootfs 用户和系统设置
+        run: |
+          sudo chroot rootfs /bin/bash -c '
+            set -e
+            echo "==== 1. 用户配置 ===="
+            # root 密码 126112
+            echo "root:126112" | chpasswd
+            # 主用户 note7 密码 126112
+            useradd -m -s /bin/bash -G sudo,audio,video,plugdev,netdev,bluetooth note7
+            echo "note7:126112" | chpasswd
+
+            echo "==== 2. 主机名 ===="
+            echo "lavender-debian" > /etc/hostname
+            cat > /etc/hosts << HOSTS
+127.0.0.1   localhost
+127.0.1.1   lavender-debian
+::1         localhost ip6-localhost ip6-loopback
+fe00::0     ip6-localnet
+ff00::0     ip6-mcastprefix
+ff02::1     ip6-allnodes
+ff02::2     ip6-allrouters
+HOSTS
+
+            echo "==== 3. 时区 ===="
+            ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+            dpkg-reconfigure -f noninteractive tzdata
+
+            echo "==== 4. Locale ===="
+            sed -i "s/# en_US.UTF-8/en_US.UTF-8/" /etc/locale.gen
+            sed -i "s/# zh_CN.UTF-8/zh_CN.UTF-8/" /etc/locale.gen
+            locale-gen
+            update-locale LANG=en_US.UTF-8
+
+            echo "==== 5. fstab (需要根据实际分区修改!) ===="
+            # 默认使用 /dev/mmcblk0pXX,XX 需要用户在 README 中告知
+            # 这里使用占位符,用户刷机后需要改
+            cat > /etc/fstab << FSTAB
+# <file system>  <mount point>  <type>  <options>         <dump>  <pass>
+/dev/mmcblk0pXX  /              ext4    defaults,noatime  0       1
+tmpfs           /tmp           tmpfs   defaults,noatime,mode=1777  0  0
+tmpfs           /var/tmp       tmpfs   defaults,noatime,mode=1777  0  0
+tmpfs           /run           tmpfs   defaults,noatime,mode=755   0  0
+FSTAB
+            echo "  ⚠️ 警告: 用户需要根据实际情况修改 /etc/fstab 中的 mmcblk0pXX"
+
+            echo "==== 6. 启用 systemd 服务 ===="
+            systemctl enable gdm3 NetworkManager ModemManager sshd
+            systemctl enable bluetooth upower || true
+
+            echo "==== 7. GNOME 首次配置跳过 ===="
+            mkdir -p /etc/skel
+            touch /etc/skel/.config/gnome-initial-setup-done
+
+            echo "==== 8. sudo 配置 (note7 可 sudo) ===="
+            echo "note7 ALL=(ALL) ALL" > /etc/sudoers.d/note7
+            chmod 440 /etc/sudoers.d/note7
+
+            echo "==== 9. 网络管理:允许 NetworkManager 管理所有设备 ===="
+            mkdir -p /etc/NetworkManager/conf.d
+            cat > /etc/NetworkManager/conf.d/10-globally-managed-devices.conf << NMCONF
+[keyfile]
+unmanaged-devices=none
+NMCONF
+
+            echo "==== 10. 启用串口 getty (调试用) ===="
+            systemctl enable serial-getty@ttyHSL0.service || true
+          '
+
+      # ============================================================
+      # 阶段 3: 构建 initramfs (极简,只是 switch_root)
+      # ============================================================
+      - name: 准备 initramfs 内容 (busybox + init 脚本)
+        run: |
+          # 把 rootfs 中已装的 busybox 和必要的 lib 复制到 initramfs_root
+          cd initramfs_root
+          mkdir -p bin sbin etc proc sys dev tmp mnt newroot usr/bin usr/sbin usr/lib
+          # 从 rootfs 复制 busybox
+          sudo cp ../rootfs/bin/busybox bin/ 2>/dev/null || sudo cp ../rootfs/usr/bin/busybox bin/ 2>/dev/null || true
+          if [ ! -f bin/busybox ]; then
+            echo "错误: rootfs 中没有 busybox"
+            exit 1
+          fi
+          sudo chmod +x bin/busybox
+          # 创建符号链接
+          for cmd in sh mount umount switch_root mkdir sleep cat echo cp mv ln ls; do
+            sudo ln -sf /bin/busybox bin/$cmd
+          done
+          # init 脚本
+          cat > init << 'INIT_EOF'
+#!/bin/sh
+# 极简 init - 挂载必要的 fs 然后 switch_root 到 Debian
+set -e
+
+echo "[initramfs] 启动中..."
+
+mount -t proc none /proc
+mount -t sysfs none /sys
+mount -t devtmpfs none /dev || mdev -s
+
+# 扫描 mmc 块设备 - 寻找包含 ext4 rootfs 的分区
+# 优先尝试常见 sdm660 上的分区: p77 (userdata) 或自定义 p78+
+# 用户需要在 fstab 中指定,这里只是挂载
+echo "[initramfs] 扫描 mmc 块设备..."
+sleep 1
+for p in /dev/mmcblk0p77 /dev/mmcblk0p78 /dev/mmcblk0p79 /dev/mmcblk0p80 /dev/mmcblk0p76; do
+    if [ -b "$p" ]; then
+        echo "[initramfs] 找到 $p,尝试挂载..."
+        if mount -t ext4 -o rw "$p" /newroot 2>/dev/null; then
+            echo "[initramfs] 挂载 $p 成功"
+            break
+        fi
+    fi
+done
+
+if [ ! -d /newroot/bin ]; then
+    echo "[initramfs] 错误:无法挂载 rootfs,进入 shell"
+    exec /bin/sh
+fi
+
+# 挂载虚拟文件系统到 newroot
+mount -t proc none /newroot/proc
+mount -t sysfs none /newroot/sys
+mount -t devtmpfs none /newroot/dev
+
+# switch_root 到 Debian
+echo "[initramfs] switch_root 到 Debian..."
+exec switch_root /newroot /sbin/init
+INIT_EOF
+          chmod +x init
+          # 列出内容
+          find . | head -30
+
+      - name: 打包 initramfs (cpio + gzip)
+        run: |
+          cd initramfs_root
+          # find + cpio 打包
+          find . | sudo cpio -o -H newc 2>/dev/null | gzip -9 > ../out/initramfs.cpio.gz
+          ls -la ../out/initramfs.cpio.gz
+          file ../out/initramfs.cpio.gz
+
+      # ============================================================
+      # 阶段 4: 打包 boot.img
+      # ============================================================
+      - name: mkbootimg 打包
+        run: |
+          cd out
+          # 红米 Note 7 (lavender) 已知 boot 参数(基于 LineageOS 实测)
+          # 如果启动失败,可调整 cmdline / base / offsets
+          mkbootimg \
+            --kernel Image.gz-dtb \
+            --ramdisk initramfs.cpio.gz \
+            --base 0x80000000 \
+            --kernel_offset 0x00080000 \
+            --ramdisk_offset 0x02000000 \
+            --tags_offset 0x01e00000 \
+            --pagesize 4096 \
+            --cmdline "androidboot.console=ttyHSL0 androidboot.hardware=qcom user_debug=31 msm_rtb.filter=0x237 ehci-hcd.park=3 lpm_levels.sleep_disabled=1 cma=32M@0-0xffffffff androidboot.selinux=permissive" \
+            --output boot.img
+          echo "==== boot.img 已生成 ===="
+          ls -la boot.img
+          file boot.img
+
+      # ============================================================
+      # 阶段 5: 打包 rootfs + 校验和
+      # ============================================================
+      - name: 打包 rootfs.tar.gz
+        run: |
+          # sudo tar 保持权限
+          sudo tar --numeric-owner -czf out/rootfs.tar.gz -C rootfs .
+          ls -la out/rootfs.tar.gz
+
+      - name: 生成校验和
+        run: |
+          cd out
+          sha256sum Image.gz-dtb initramfs.cpio.gz boot.img rootfs.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      # ============================================================
+      # 阶段 6: 上传 artifact
+      # ============================================================
+      - name: 上传构建产物 (artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: note7-debian-build
+          path: |
+            out/Image.gz-dtb
+            out/initramfs.cpio.gz
+            out/boot.img
+            out/rootfs.tar.gz
+            out/SHA256SUMS
+            logs/kernel-build.log
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 准备发布包
+        if: success()
+        run: |
+          mkdir -p release
+          cp out/boot.img release/
+          cp out/rootfs.tar.gz release/
+          cp out/SHA256SUMS release/
+          cp -r configs release/
+          cp -r initramfs release/
+          cp -r scripts release/
+
+      - name: 上传完整发布包
+        uses: actions/upload-artifact@v4
+        with:
+          name: note7-debian-release
+          path: release/
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: 总结
+        if: always()
+        run: |
+          echo "==== 构建总结 ===="
+          ls -la out/ 2>/dev/null
+          echo "==== 日志尾部 ===="
+          tail -30 logs/kernel-build.log 2>/dev/null || echo "(无日志)"

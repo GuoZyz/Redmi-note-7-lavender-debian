@@ -1,0 +1,82 @@
+#!/bin/sh
+# 极简 init - 用于启动 Debian 13 rootfs
+# 工作原理: 挂载必要的虚拟文件系统 + 扫描 mmcblk0 找到 ext4 分区 + switch_root
+
+set -e
+
+echo "[initramfs] ====== 启动中 ======"
+echo "[initramfs] 内核版本: $(uname -r)"
+echo "[initramfs] 命令行: $(cat /proc/cmdline)"
+
+# 挂载虚拟文件系统
+mount -t proc none /proc 2>/dev/null || true
+mount -t sysfs none /sys 2>/dev/null || true
+mount -t devtmpfs none /dev 2>/dev/null || mdev -s
+
+# 输出设备列表(便于调试)
+echo "[initramfs] 块设备列表:"
+cat /proc/partitions
+echo "[initramfs] /dev 内容:"
+ls -la /dev/ | head -30
+
+# 扫描 mmc 块设备寻找 ext4 分区
+# 默认尝试顺序: 已知 lavender LineageOS 用户数据区
+# ⚠️ 用户需要根据实际设备调整
+sleep 2
+
+ROOT_PART=""
+for p in /dev/mmcblk0p77 /dev/mmcblk0p78 /dev/mmcblk0p79 /dev/mmcblk0p80 \
+         /dev/mmcblk0p76 /dev/mmcblk0p75 /dev/mmcblk0p50 /dev/mmcblk0p49; do
+    if [ -b "$p" ]; then
+        echo "[initramfs] 尝试 $p ..."
+        if mount -t ext4 -o rw "$p" /newroot 2>/dev/null; then
+            if [ -x /newroot/sbin/init ] || [ -L /newroot/sbin/init ]; then
+                echo "[initramfs] ✓ $p 是有效的 rootfs"
+                ROOT_PART="$p"
+                break
+            else
+                echo "[initramfs] $p 挂载了但没有 /sbin/init,卸载"
+                umount /newroot
+            fi
+        fi
+    fi
+done
+
+# 如果 mmcblk0 没找到,尝试 mmcblk1 (SD 卡)
+if [ -z "$ROOT_PART" ]; then
+    for p in /dev/mmcblk1p1 /dev/mmcblk1p2; do
+        if [ -b "$p" ]; then
+            echo "[initramfs] 尝试 SD 卡 $p ..."
+            if mount -t ext4 -o rw "$p" /newroot 2>/dev/null; then
+                if [ -x /newroot/sbin/init ] || [ -L /newroot/sbin/init ]; then
+                    echo "[initramfs] ✓ $p 是有效的 rootfs (SD 卡)"
+                    ROOT_PART="$p"
+                    break
+                else
+                    umount /newroot
+                fi
+            fi
+        fi
+    done
+fi
+
+if [ -z "$ROOT_PART" ]; then
+    echo "[initramfs] ✗ 错误: 找不到有效的 rootfs 分区"
+    echo "[initramfs] 进入调试 shell"
+    exec /bin/sh
+fi
+
+echo "[initramfs] 挂载虚拟文件系统到 newroot..."
+mount -t proc none /newroot/proc
+mount -t sysfs none /newroot/sys
+mount -t devtmpfs none /newroot/dev
+mount -t tmpfs none /newroot/run
+
+# 复制 /etc 中的重要文件(可选)
+# cp /etc/fstab /newroot/etc/fstab 2>/dev/null || true
+
+echo "[initramfs] switch_root 到 Debian..."
+exec switch_root /newroot /sbin/init
+
+echo "[initramfs] ✗ switch_root 失败"
+exec /bin/sh

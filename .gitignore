@@ -1,0 +1,24 @@
+# Git 忽略文件
+# 内核源码(本地不下载,让 Actions 拉取)
+kernel/
+# rootfs(本地不构建,让 Actions 构建)
+rootfs/
+initramfs_root/
+# 构建产物
+out/
+artifacts/
+release/
+# 日志
+logs/
+*.log
+# 配置备份
+configs/*.bak
+# 系统文件
+.DS_Store
+*.swp
+*~
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
