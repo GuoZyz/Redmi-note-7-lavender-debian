@@ -183,11 +183,11 @@ jobs:
             set -e
             echo "==== 1. 配置 sources.list (清华源) ===="
             cat > /etc/apt/sources.list << SOURCES
-deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie main contrib non-free non-free-firmware
-deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie-updates main contrib non-free non-free-firmware
-deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie-backports main contrib non-free non-free-firmware
-deb https://mirrors.tuna.tsinghua.edu.cn/debian-security trixie-security main contrib non-free non-free-firmware
-SOURCES
+                              deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie main contrib non-free non-free-firmware
+                              deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie-updates main contrib non-free non-free-firmware
+                              deb https://mirrors.tuna.tsinghua.edu.cn/debian trixie-backports main contrib non-free non-free-firmware
+                              deb https://mirrors.tuna.tsinghua.edu.cn/debian-security trixie-security main contrib non-free non-free-firmware
+              SOURCES
             apt-get update
             echo "==== 2. 安装基础包 ===="
             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -233,14 +233,14 @@ SOURCES
             echo "==== 2. 主机名 ===="
             echo "lavender-debian" > /etc/hostname
             cat > /etc/hosts << HOSTS
-127.0.0.1   localhost
-127.0.1.1   lavender-debian
-::1         localhost ip6-localhost ip6-loopback
-fe00::0     ip6-localnet
-ff00::0     ip6-mcastprefix
-ff02::1     ip6-allnodes
-ff02::2     ip6-allrouters
-HOSTS
+                              127.0.0.1   localhost
+                              127.0.1.1   lavender-debian
+                              ::1         localhost ip6-localhost ip6-loopback
+                              fe00::0     ip6-localnet
+                              ff00::0     ip6-mcastprefix
+                              ff02::1     ip6-allnodes
+                              ff02::2     ip6-allrouters
+              HOSTS
 
             echo "==== 3. 时区 ===="
             ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
@@ -256,12 +256,12 @@ HOSTS
             # 默认使用 /dev/mmcblk0pXX,XX 需要用户在 README 中告知
             # 这里使用占位符,用户刷机后需要改
             cat > /etc/fstab << FSTAB
-# <file system>  <mount point>  <type>  <options>         <dump>  <pass>
-/dev/mmcblk0pXX  /              ext4    defaults,noatime  0       1
-tmpfs           /tmp           tmpfs   defaults,noatime,mode=1777  0  0
-tmpfs           /var/tmp       tmpfs   defaults,noatime,mode=1777  0  0
-tmpfs           /run           tmpfs   defaults,noatime,mode=755   0  0
-FSTAB
+                              # <file system>  <mount point>  <type>  <options>         <dump>  <pass>
+                              /dev/mmcblk0pXX  /              ext4    defaults,noatime  0       1
+                              tmpfs           /tmp           tmpfs   defaults,noatime,mode=1777  0  0
+                              tmpfs           /var/tmp       tmpfs   defaults,noatime,mode=1777  0  0
+                              tmpfs           /run           tmpfs   defaults,noatime,mode=755   0  0
+              FSTAB
             echo "  ⚠️ 警告: 用户需要根据实际情况修改 /etc/fstab 中的 mmcblk0pXX"
 
             echo "==== 6. 启用 systemd 服务 ===="
@@ -279,9 +279,9 @@ FSTAB
             echo "==== 9. 网络管理:允许 NetworkManager 管理所有设备 ===="
             mkdir -p /etc/NetworkManager/conf.d
             cat > /etc/NetworkManager/conf.d/10-globally-managed-devices.conf << NMCONF
-[keyfile]
-unmanaged-devices=none
-NMCONF
+                              [keyfile]
+                              unmanaged-devices=none
+              NMCONF
 
             echo "==== 10. 启用串口 getty (调试用) ===="
             systemctl enable serial-getty@ttyHSL0.service || true
@@ -308,45 +308,45 @@ NMCONF
           done
           # init 脚本
           cat > init << 'INIT_EOF'
-#!/bin/sh
-# 极简 init - 挂载必要的 fs 然后 switch_root 到 Debian
-set -e
+            #!/bin/sh
+            # 极简 init - 挂载必要的 fs 然后 switch_root 到 Debian
+            set -e
 
-echo "[initramfs] 启动中..."
+            echo "[initramfs] 启动中..."
 
-mount -t proc none /proc
-mount -t sysfs none /sys
-mount -t devtmpfs none /dev || mdev -s
+            mount -t proc none /proc
+            mount -t sysfs none /sys
+            mount -t devtmpfs none /dev || mdev -s
 
-# 扫描 mmc 块设备 - 寻找包含 ext4 rootfs 的分区
-# 优先尝试常见 sdm660 上的分区: p77 (userdata) 或自定义 p78+
-# 用户需要在 fstab 中指定,这里只是挂载
-echo "[initramfs] 扫描 mmc 块设备..."
-sleep 1
-for p in /dev/mmcblk0p77 /dev/mmcblk0p78 /dev/mmcblk0p79 /dev/mmcblk0p80 /dev/mmcblk0p76; do
-    if [ -b "$p" ]; then
-        echo "[initramfs] 找到 $p,尝试挂载..."
-        if mount -t ext4 -o rw "$p" /newroot 2>/dev/null; then
-            echo "[initramfs] 挂载 $p 成功"
-            break
-        fi
-    fi
-done
+            # 扫描 mmc 块设备 - 寻找包含 ext4 rootfs 的分区
+            # 优先尝试常见 sdm660 上的分区: p77 (userdata) 或自定义 p78+
+            # 用户需要在 fstab 中指定,这里只是挂载
+            echo "[initramfs] 扫描 mmc 块设备..."
+            sleep 1
+            for p in /dev/mmcblk0p77 /dev/mmcblk0p78 /dev/mmcblk0p79 /dev/mmcblk0p80 /dev/mmcblk0p76; do
+                if [ -b "$p" ]; then
+                    echo "[initramfs] 找到 $p,尝试挂载..."
+                    if mount -t ext4 -o rw "$p" /newroot 2>/dev/null; then
+                        echo "[initramfs] 挂载 $p 成功"
+                        break
+                    fi
+                fi
+            done
 
-if [ ! -d /newroot/bin ]; then
-    echo "[initramfs] 错误:无法挂载 rootfs,进入 shell"
-    exec /bin/sh
-fi
+            if [ ! -d /newroot/bin ]; then
+                echo "[initramfs] 错误:无法挂载 rootfs,进入 shell"
+                exec /bin/sh
+            fi
 
-# 挂载虚拟文件系统到 newroot
-mount -t proc none /newroot/proc
-mount -t sysfs none /newroot/sys
-mount -t devtmpfs none /newroot/dev
+            # 挂载虚拟文件系统到 newroot
+            mount -t proc none /newroot/proc
+            mount -t sysfs none /newroot/sys
+            mount -t devtmpfs none /newroot/dev
 
-# switch_root 到 Debian
-echo "[initramfs] switch_root 到 Debian..."
-exec switch_root /newroot /sbin/init
-INIT_EOF
+            # switch_root 到 Debian
+            echo "[initramfs] switch_root 到 Debian..."
+            exec switch_root /newroot /sbin/init
+            INIT_EOF
           chmod +x init
           # 列出内容
           find . | head -30
