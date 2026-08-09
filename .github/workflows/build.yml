@@ -143,6 +143,10 @@ jobs:
           # 关闭一些 LineageOS 自带的 Android-only 选项(可选)
           ./scripts/config --disable CONFIG_ANDROID_LOW_MEMORY_KILLER || true
           ./scripts/config --disable CONFIG_ION || true
+          ./scripts/config --disable CONFIG_COMPAT_VDSO || true
+          ./scripts/config --disable CONFIG_CROSS_COMPILE_ARM32 || true
+          # sdm660 不需要 32-bit compat vDSO (这是 armv7hl 的)
+          ./scripts/config --disable CONFIG_VDSO32 || true
           # 显示调整后的关键选项
           echo "==== 调整后关键选项 ===="
           grep -E "^CONFIG_(DEVTMPFS|TMPFS|CGROUP|SYSVIPC|EXT4_FS|OVERLAY_FS|DRM|FHANDLE)=" .config | head -20
