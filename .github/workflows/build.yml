@@ -162,10 +162,20 @@ jobs:
           mkdir -p ../logs
           echo "==== 开始编译,估计 30-90 分钟 ===="
           export CC="ccache aarch64-linux-gnu-gcc"
+          # 不再用 tee | tail (会吞输出),直接重定向到文件
+          set +e
           time make -j$(nproc) ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
             KCFLAGS="-Wno-error" \
-            Image.gz-dtb dtbs 2>&1 | tee ../logs/kernel-build.log | tail -100
+            Image.gz-dtb dtbs > ../logs/kernel-build.log 2>&1
+          MAKE_EXIT=$?
+          set -e
+          echo "==== make 退出码: $MAKE_EXIT ===="
+          echo "==== 最后 100 行日志 ===="
+          tail -100 ../logs/kernel-build.log
+          echo "==== 错误信息(如果有) ===="
+          grep -E "^.*:[0-9]+:[0-9]+: (error|fatal):|Error 1|Error 2|undefined reference" ../logs/kernel-build.log | head -20 || echo "无明显错误"
+          exit $MAKE_EXIT
           echo "==== 编译完成 ===="
           if [ -f arch/arm64/boot/Image.gz-dtb ]; then
             ls -la arch/arm64/boot/Image.gz-dtb
