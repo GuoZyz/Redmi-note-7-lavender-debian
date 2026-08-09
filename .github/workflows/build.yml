@@ -53,15 +53,6 @@ jobs:
       # ============================================================
       # 阶段 1: 编译内核
       # ============================================================
-      - name: 验证 aarch64 gcc 可用
-        run: |
-          which aarch64-linux-gnu-gcc && aarch64-linux-gnu-gcc --version | head -1 || {
-            echo "错误: aarch64-linux-gnu-gcc 不可用"
-            ls /usr/bin/ | grep aarch64 || echo "  /usr/bin 中没有"
-            ls /usr/aarch64-linux-gnu/bin/ 2>/dev/null || echo "  /usr/aarch64-linux-gnu/bin 不存在"
-            exit 1
-          }
-
       - name: 安装内核编译依赖
         run: |
           sudo apt-get update
@@ -77,10 +68,12 @@ jobs:
             device-tree-compiler libncurses-dev dosfstools mtools \
             mkbootimg android-tools-adb aapt
           echo "==== 验证 aarch64 工具链 ===="
-            aarch64-linux-gnu-gcc --version | head -1
-            aarch64-linux-gnu-ld --version | head -1
-            aarch64-linux-gnu-as --version | head -1
+          aarch64-linux-gnu-gcc --version | head -1
+          aarch64-linux-gnu-ld --version | head -1
+          aarch64-linux-gnu-as --version | head -1
           ls -la $(which aarch64-linux-gnu-gcc)
+          echo "==== 验证 ccache ===="
+          ccache --version | head -2
 
       - name: 克隆内核源码 (lineage-18.1 / sdm660)
         run: |
