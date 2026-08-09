@@ -142,11 +142,18 @@ jobs:
           ./scripts/config --enable CONFIG_DRM_FBDEV_EMULATION
           # 关闭一些 LineageOS 自带的 Android-only 选项(可选)
           ./scripts/config --disable CONFIG_ANDROID_LOW_MEMORY_KILLER || true
-          ./scripts/config --disable CONFIG_ION || true
+          # CONFIG_ION 是 msm 声音驱动必需的, 不能禁用
+          ./scripts/config --enable CONFIG_ION || true
+          ./scripts/config --enable CONFIG_ION_LEGACY || true
           ./scripts/config --disable CONFIG_COMPAT_VDSO || true
           ./scripts/config --disable CONFIG_CROSS_COMPILE_ARM32 || true
-          # sdm660 不需要 32-bit compat vDSO (这是 armv7hl 的)
           ./scripts/config --disable CONFIG_VDSO32 || true
+          # 蓝牙 btfm_slim 编译失败(可能 ABI 问题),先禁用
+          ./scripts/config --disable CONFIG_BTFM_SLIM || true
+          ./scripts/config --disable CONFIG_BT_QCA_SMD || true
+          # msm 声音驱动依赖未公开 ABI, 先禁用
+          ./scripts/config --disable CONFIG_SND_SOC_MSM_QDSP6V2 || true
+          ./scripts/config --disable CONFIG_SND_SOC_MSM_QDSP6V2_AUDIO || true
           # 显示调整后的关键选项
           echo "==== 调整后关键选项 ===="
           grep -E "^CONFIG_(DEVTMPFS|TMPFS|CGROUP|SYSVIPC|EXT4_FS|OVERLAY_FS|DRM|FHANDLE)=" .config | head -20
