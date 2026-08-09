@@ -47,7 +47,7 @@ jobs:
 
       - name: 准备构建目录
         run: |
-          mkdir -p kernel rootfs initramfs_root out artifacts
+          mkdir -p kernel rootfs initramfs_root out artifacts logs configs
           ls -la
 
       # ============================================================
@@ -159,17 +159,25 @@ jobs:
       - name: 编译内核 (Image.gz-dtb + dtbs)
         run: |
           cd kernel
+          mkdir -p ../logs
           echo "==== 开始编译,估计 30-90 分钟 ===="
           export CC="ccache aarch64-linux-gnu-gcc"
           time make -j$(nproc) ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=aarch64-linux-gnu- \
             KCFLAGS="-Wno-error" \
             Image.gz-dtb dtbs 2>&1 | tee ../logs/kernel-build.log | tail -100
           echo "==== 编译完成 ===="
-          ls -la arch/arm64/boot/Image.gz-dtb
-          file arch/arm64/boot/Image.gz-dtb
-          cp arch/arm64/boot/Image.gz-dtb ../out/Image.gz-dtb
+          if [ -f arch/arm64/boot/Image.gz-dtb ]; then
+            ls -la arch/arm64/boot/Image.gz-dtb
+            file arch/arm64/boot/Image.gz-dtb
+            cp arch/arm64/boot/Image.gz-dtb ../out/Image.gz-dtb
+          else
+            echo "==== 错误: Image.gz-dtb 未生成 ===="
+            echo "==== 最后 30 行编译日志 ===="
+            tail -30 ../logs/kernel-build.log
+            echo "==== 完整日志已保存到 logs/kernel-build.log ===="
+            exit 1
+          fi
 
       # ============================================================
       # 阶段 2: 构建 Debian 13 ARM64 rootfs
