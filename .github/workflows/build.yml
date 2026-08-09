@@ -63,7 +63,7 @@ jobs:
           # 不装 gcc-multilib (与 gcc-13-aarch64 冲突)
           sudo apt-get install -y \
             git ccache bc bison build-essential cpio curl flex \
-            g++-multilib gnupg gperf imagemagick \
+            gnupg gperf imagemagick \
             gcc-13-aarch64-linux-gnu g++-13-aarch64-linux-gnu \
             lib32readline-dev lib32z1-dev libelf-dev liblz4-tool \
             libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop \
