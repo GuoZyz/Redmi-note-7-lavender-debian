@@ -86,6 +86,22 @@ jobs:
           ls -la | head -20
           echo "==== arch/arm64/configs/ ===="
           ls -la arch/arm64/configs/ | head -20
+          echo "==== 删除有问题的源码 ===="
+          rm -rf drivers/input/misc/vl53L0 || true
+          rm -f drivers/gpu/msm/kgsl_trace.c || true
+          rm -f drivers/bluetooth/btfm_slim.c || true
+          echo "==== 注释掉 Kbuild 中残留引用 ===="
+          for mf in drivers/input/misc/Makefile drivers/gpu/msm/Makefile drivers/bluetooth/Makefile; do
+            if [ -f "$mf" ]; then
+              sed -i 's|^obj-\$(CONFIG.*) += vl53L0|# disabled vl53L0|' "$mf" 2>/dev/null || true
+              sed -i 's|^obj-\$(CONFIG.*) += kgsl_trace|# disabled kgsl_trace|' "$mf" 2>/dev/null || true
+              sed -i 's|^obj-\$(CONFIG.*) += btfm_slim|# disabled btfm_slim|' "$mf" 2>/dev/null || true
+            fi
+          done
+          echo "==== 验证删除 ===="
+          ls drivers/input/misc/vl53L0 2>&1 | head -2
+          ls drivers/gpu/msm/kgsl_trace.c 2>&1 | head -2
+          ls drivers/bluetooth/btfm_slim.c 2>&1 | head -2
 
       - name: 配置内核 (lavender_defconfig)
         run: |
