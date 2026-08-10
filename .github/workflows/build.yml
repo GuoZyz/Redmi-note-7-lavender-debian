@@ -154,6 +154,11 @@ jobs:
           # msm 声音驱动依赖未公开 ABI, 先禁用
           ./scripts/config --disable CONFIG_SND_SOC_MSM_QDSP6V2 || true
           ./scripts/config --disable CONFIG_SND_SOC_MSM_QDSP6V2_AUDIO || true
+          # VL53L0 测距传感器 (头文件缺失)
+          ./scripts/config --disable CONFIG_STMVL53L0 || true
+          ./scripts/config --disable CONFIG_INPUT_VL53L0 || true
+          # kgsl_trace 跟踪(可能缺 tracepoint 定义)
+          ./scripts/config --disable CONFIG_MSM_KGSL_TRACE || true
           # 显示调整后的关键选项
           echo "==== 调整后关键选项 ===="
           grep -E "^CONFIG_(DEVTMPFS|TMPFS|CGROUP|SYSVIPC|EXT4_FS|OVERLAY_FS|DRM|FHANDLE)=" .config | head -20
