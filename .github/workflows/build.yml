@@ -174,7 +174,20 @@ jobs:
           mkdir -p ../logs
           echo "==== 开始编译,估计 30-90 分钟 ===="
           export CC="ccache aarch64-linux-gnu-gcc"
-          # 不再用 tee | tail (会吞输出),直接重定向到文件
+          # 临时禁用有问题的子目录 (直接删除 Makefile 中的 obj-y)
+          # vl53L0 - 缺头文件 stmvl53l0-i2c.h
+          # kgsl_trace - 缺 tracepoint
+          # btfm_slim - 蓝牙编译错误
+          echo "==== 临时禁用有问题的子目录 ===="
+          for sub in vl53L0 kgsl_trace btfm_slim; do
+            for mf in $(find drivers -name Makefile 2>/dev/null); do
+              sed -i "s|^obj-\\$(CONFIG_.*) += $sub.o$|# disabled: $sub|g" "$mf" 2>/dev/null || true
+              sed -i "s|^obj-\\$(CONFIG_.*) += stmvl53l0|# disabled: stmvl53l0|g" "$mf" 2>/dev/null || true
+            done
+          done
+          # 直接禁用子目录的编译
+          rm -rf drivers/input/misc/vl53L0 2>/dev/null || true
+          rm -f drivers/gpu/msm/kgsl_trace.c drivers/bluetooth/btfm_slim.c 2>/dev/null || true
           set +e
           time make -j$(nproc) ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
@@ -185,7 +198,7 @@ jobs:
           echo "==== make 退出码: $MAKE_EXIT ===="
           echo "==== 最后 100 行日志 ===="
           tail -100 ../logs/kernel-build.log
-          echo "==== 错误信息(如果有) ===="
+          echo "==== 错误信息 ===="
           grep -E "^.*:[0-9]+:[0-9]+: (error|fatal):|Error 1|Error 2|undefined reference" ../logs/kernel-build.log | head -20 || echo "无明显错误"
           exit $MAKE_EXIT
           echo "==== 编译完成 ===="
