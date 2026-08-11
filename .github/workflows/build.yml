@@ -86,22 +86,6 @@ jobs:
           ls -la | head -20
           echo "==== arch/arm64/configs/ ===="
           ls -la arch/arm64/configs/ | head -20
-          echo "==== 删除有问题的源码 ===="
-          rm -rf drivers/input/misc/vl53L0 || true
-          rm -f drivers/gpu/msm/kgsl_trace.c || true
-          rm -f drivers/bluetooth/btfm_slim.c || true
-          echo "==== 注释掉 Kbuild 中残留引用 ===="
-          for mf in drivers/input/misc/Makefile drivers/gpu/msm/Makefile drivers/bluetooth/Makefile; do
-            if [ -f "$mf" ]; then
-              sed -i 's|^obj-\$(CONFIG.*) += vl53L0|# disabled vl53L0|' "$mf" 2>/dev/null || true
-              sed -i 's|^obj-\$(CONFIG.*) += kgsl_trace|# disabled kgsl_trace|' "$mf" 2>/dev/null || true
-              sed -i 's|^obj-\$(CONFIG.*) += btfm_slim|# disabled btfm_slim|' "$mf" 2>/dev/null || true
-            fi
-          done
-          echo "==== 验证删除 ===="
-          ls drivers/input/misc/vl53L0 2>&1 | head -2
-          ls drivers/gpu/msm/kgsl_trace.c 2>&1 | head -2
-          ls drivers/bluetooth/btfm_slim.c 2>&1 | head -2
 
       - name: 配置内核 (lavender_defconfig)
         run: |
@@ -156,33 +140,76 @@ jobs:
           ./scripts/config --enable CONFIG_VIRTIO_NET
           ./scripts/config --enable CONFIG_DRM
           ./scripts/config --enable CONFIG_DRM_FBDEV_EMULATION
-          # 关闭一些 LineageOS 自带的 Android-only 选项(可选)
+          # 关闭 LineageOS 自带的 Android-only 选项(可选)
           ./scripts/config --disable CONFIG_ANDROID_LOW_MEMORY_KILLER || true
-          # CONFIG_ION 是 msm 声音驱动必需的, 不能禁用
+          # CONFIG_ION 是 msm 声音驱动必需的, 必须启用
           ./scripts/config --enable CONFIG_ION || true
           ./scripts/config --enable CONFIG_ION_LEGACY || true
+          # sdm660 是 ARM64-only, 不需要 32-bit compat vDSO (避免 ARM32 工具链错误)
           ./scripts/config --disable CONFIG_COMPAT_VDSO || true
           ./scripts/config --disable CONFIG_CROSS_COMPILE_ARM32 || true
           ./scripts/config --disable CONFIG_VDSO32 || true
-          # 蓝牙 btfm_slim 编译失败(可能 ABI 问题),先禁用
-          ./scripts/config --disable CONFIG_BTFM_SLIM || true
-          ./scripts/config --disable CONFIG_BT_QCA_SMD || true
-          # msm 声音驱动依赖未公开 ABI, 先禁用
-          ./scripts/config --disable CONFIG_SND_SOC_MSM_QDSP6V2 || true
-          ./scripts/config --disable CONFIG_SND_SOC_MSM_QDSP6V2_AUDIO || true
-          # VL53L0 测距传感器 (头文件缺失)
-          ./scripts/config --disable CONFIG_STMVL53L0 || true
-          ./scripts/config --disable CONFIG_INPUT_VL53L0 || true
-          # kgsl_trace 跟踪(可能缺 tracepoint 定义)
-          ./scripts/config --disable CONFIG_MSM_KGSL_TRACE || true
           # 显示调整后的关键选项
           echo "==== 调整后关键选项 ===="
-          grep -E "^CONFIG_(DEVTMPFS|TMPFS|CGROUP|SYSVIPC|EXT4_FS|OVERLAY_FS|DRM|FHANDLE)=" .config | head -20
+          grep -E "^CONFIG_(DEVTMPFS|TMPFS|CGROUP|SYSVIPC|EXT4_FS|OVERLAY_FS|DRM|FHANDLE|COMPAT_VDSO|ION)=" .config | head -20
           # 重新生成配置
           make ARCH=arm64 olddefconfig
           # 保存调整后的配置作为 artifact
           mkdir -p ../configs
           cp .config ../configs/lavender.config
+
+      - name: 修补内核 Makefile (添加缺失的 -I 头文件路径)
+        # 修复 LineageOS sdm660 源码中多个 Makefile 缺少的 -I 头文件搜索路径
+        # 这些是上游 bug，导致 trace.h 循环包含和头文件找不到
+        run: |
+          cd kernel
+          echo "==== 修补 drivers/gpu/msm/Makefile (kgsl_trace.h 路径) ===="
+          sed -i 's|^ccflags-y := -Idrivers/staging/android$|ccflags-y := -Idrivers/staging/android -I$(srctree)/drivers/gpu/msm|' drivers/gpu/msm/Makefile
+
+          echo "==== 修补 drivers/input/misc/vl53L0/Makefile (stmvl53l0 头文件路径) ===="
+          sed -i 's|^ccflags-y	+= -Idrivers/input/misc/vl53L0/inc -DCAMERA_CCI$|ccflags-y	+= -Idrivers/input/misc/vl53L0/inc -Idrivers/input/misc/vl53L0 -DCAMERA_CCI|' drivers/input/misc/vl53L0/Makefile
+          sed -i 's|^ccflags-y	+= -Idrivers/input/misc/vl53L0/inc$|ccflags-y	+= -Idrivers/input/misc/vl53L0/inc -Idrivers/input/misc/vl53L0|' drivers/input/misc/vl53L0/Makefile
+
+          echo "==== 修补 drivers/bluetooth/Makefile (btfm_slim.h 路径) ===="
+          sed -i 's|^ccflags-y += -D__CHECK_ENDIAN__$|ccflags-y += -D__CHECK_ENDIAN__ -I$(srctree)/drivers/bluetooth|' drivers/bluetooth/Makefile
+
+          echo "==== 修补 drivers/net/ethernet/msm/Makefile (rndis_ipa_trace.h 路径) ===="
+          sed -i 's|^obj-\$(CONFIG_MSM_RMNET_MHI) += msm_rmnet_mhi.o$|ccflags-y += -I$(srctree)/drivers/net/ethernet/msm\nobj-$(CONFIG_MSM_RMNET_MHI) += msm_rmnet_mhi.o|' drivers/net/ethernet/msm/Makefile
+
+          echo "==== 修补 drivers/media/platform/msm/camera_v2/common/Makefile (msm_camera_tz_util.h 路径) ===="
+          # 使用 sed 多行命令在匹配行后插入 (camera_v2/ 末尾是 // 需要转义)
+          sed -i -e '/^ccflags-y += -Idrivers\/media\/platform\/msm\/camera_v2\/$/{a\
+ccflags-y += -Idrivers/media/platform/msm/camera_v2/common
+}' drivers/media/platform/msm/camera_v2/common/Makefile
+
+          echo "==== 修补 drivers/media/platform/msm/camera_v2/isp/Makefile (msm_isp.h 路径) ===="
+          sed -i -e '/^ccflags-y += -Idrivers\/media\/platform\/msm\/camera_v2\/sensor\/io$/{a\
+ccflags-y += -Idrivers/media/platform/msm/camera_v2/isp
+}' drivers/media/platform/msm/camera_v2/isp/Makefile
+
+          echo "==== 修补 drivers/media/platform/msm/camera_v2/sensor/io/Makefile (msm_camera_i2c.h 路径) ===="
+          sed -i -e '/^ccflags-y += -Idrivers\/media\/platform\/msm\/camera_v2\/sensor\/cci$/{a\
+ccflags-y += -Idrivers/media/platform/msm/camera_v2/sensor/io
+}' drivers/media/platform/msm/camera_v2/sensor/io/Makefile
+
+          echo "==== 修补 drivers/platform/msm/ipa/ipa_v2/Makefile (ipa_trace.h 路径) ===="
+          # 在第一行前插入 ccflags-y (使用 sed)
+          sed -i '1i ccflags-y += -I$(srctree)/drivers/platform/msm/ipa/ipa_v2' drivers/platform/msm/ipa/ipa_v2/Makefile
+
+          echo "==== 修补 drivers/platform/msm/ipa/ipa_v3/Makefile (ipa_trace.h 路径) ===="
+          sed -i '1i ccflags-y += -I$(srctree)/drivers/platform/msm/ipa/ipa_v3' drivers/platform/msm/ipa/ipa_v3/Makefile
+
+          echo "==== 修补 drivers/soc/qcom/Makefile (tracer_pkt_private.h 路径) ===="
+          # 在 ccflags-$(CONFIG_MSM_QBT1000) 行之前插入
+          sed -i -e '/^ccflags-$(CONFIG_MSM_QBT1000) += -Idrivers\/misc\/$/{i\
+ccflags-y += -I$(srctree)/drivers/soc/qcom
+}' drivers/soc/qcom/Makefile
+
+          echo "==== 验证修补 ===="
+          for mf in drivers/gpu/msm/Makefile drivers/input/misc/vl53L0/Makefile drivers/bluetooth/Makefile drivers/net/ethernet/msm/Makefile drivers/media/platform/msm/camera_v2/common/Makefile drivers/media/platform/msm/camera_v2/isp/Makefile drivers/media/platform/msm/camera_v2/sensor/io/Makefile drivers/platform/msm/ipa/ipa_v2/Makefile drivers/platform/msm/ipa/ipa_v3/Makefile drivers/soc/qcom/Makefile; do
+            echo "--- $mf ---"
+            head -5 "$mf"
+          done
 
       - name: 编译内核 (Image.gz-dtb + dtbs)
         run: |
@@ -190,20 +217,6 @@ jobs:
           mkdir -p ../logs
           echo "==== 开始编译,估计 30-90 分钟 ===="
           export CC="ccache aarch64-linux-gnu-gcc"
-          # 临时禁用有问题的子目录 (直接删除 Makefile 中的 obj-y)
-          # vl53L0 - 缺头文件 stmvl53l0-i2c.h
-          # kgsl_trace - 缺 tracepoint
-          # btfm_slim - 蓝牙编译错误
-          echo "==== 临时禁用有问题的子目录 ===="
-          for sub in vl53L0 kgsl_trace btfm_slim; do
-            for mf in $(find drivers -name Makefile 2>/dev/null); do
-              sed -i "s|^obj-\\$(CONFIG_.*) += $sub.o$|# disabled: $sub|g" "$mf" 2>/dev/null || true
-              sed -i "s|^obj-\\$(CONFIG_.*) += stmvl53l0|# disabled: stmvl53l0|g" "$mf" 2>/dev/null || true
-            done
-          done
-          # 直接禁用子目录的编译
-          rm -rf drivers/input/misc/vl53L0 2>/dev/null || true
-          rm -f drivers/gpu/msm/kgsl_trace.c drivers/bluetooth/btfm_slim.c 2>/dev/null || true
           set +e
           time make -j$(nproc) ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- \
