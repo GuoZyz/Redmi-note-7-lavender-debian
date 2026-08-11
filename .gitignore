@@ -1,7 +1,7 @@
 # Git 忽略文件
-# 内核源码(本地不下载,让 Actions 拉取)
+# 内核源码(本地不下载)
 kernel/
-# rootfs(本地不构建,让 Actions 构建)
+# 临时 rootfs(本地构建目录)
 rootfs/
 initramfs_root/
 # 构建产物
